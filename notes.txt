@@ -1,0 +1,208 @@
+Good. Helmet on. Build mode 🧱.
+
+You already did the thinking work (repo + schema).
+Now we convert design → running system.
+
+No wandering. Follow in order.
+
+🎯 Final Target
+
+When someone runs:
+
+python src/demo/run_comparison.py
+
+
+they must see:
+
+✔ baseline answer
+✔ graph-aware answer
+✔ visible difference
+✔ what context was retrieved
+
+Everything you build serves this moment.
+
+🪜 Step-by-Step Work Plan (correct order)
+✅ STEP 1 — Create seed data
+
+Goal: graph must exist before AI can use it.
+
+Create:
+
+src/graph/seed.py
+
+
+Hardcode:
+
+one student
+
+one course
+
+one assignment
+
+one deadline
+
+one decision (extension approved)
+
+one screen
+
+one conversation
+
+one intent
+
+Keep tiny.
+
+When run, it should build a graph in memory.
+
+If step 1 is missing → nothing else works.
+
+✅ STEP 2 — Graph access layer
+
+Create:
+
+src/graph/queries.py
+
+
+Functions like:
+
+get_user(user_id)
+get_current_screen(user_id)
+get_user_goals(user_id)
+get_assignment_for_goal(goal_id)
+get_deadline(assignment_id)
+get_active_decisions(user_id, assignment_id)
+get_last_intent(user_id)
+
+
+Simple. Hardcoded is fine.
+
+This is your database API.
+
+✅ STEP 3 — Build context selector (STAR of project ⭐)
+
+Create:
+
+src/retrieval/context_selector.py
+
+
+Input:
+
+user_id, detected_intent
+
+
+Output:
+small dict:
+
+{
+ assignment,
+ deadline,
+ decisions,
+ screen,
+ intent
+}
+
+
+This is subgraph extraction.
+
+If this part is weak → project is weak.
+
+✅ STEP 4 — Prompt builder
+
+Create:
+
+src/llm/prompt_builder.py
+
+
+Turn context into text like:
+
+Student is on assignment page.
+Deadline is Feb 15.
+Extension valid until Feb 18.
+
+
+Keep structured.
+
+✅ STEP 5 — LLM client
+
+Create:
+
+src/llm/client.py
+
+Wrapper around API.
+One function:
+generate(prompt)
+
+
+Done.
+
+✅ STEP 6 — Baseline system
+
+Create:
+src/baseline/naive_chat.py
+
+
+It sends only:
+user message
+
+No context.
+This gives generic output.
+
+You NEED this to show improvement.
+
+✅ STEP 7 — Graph-aware system (LangGraph or simple pipeline)
+
+Create:
+
+src/flow/assistant_flow.py
+
+
+Flow:
+
+input
+ → detect intent
+ → retrieve context
+ → build prompt
+ → call LLM
+ → return answer
+
+
+You can upgrade to LangGraph after basic version works.
+
+✅ STEP 8 — Comparison runner 🎬
+
+Create:
+src/demo/run_comparison.py
+
+This will:
+
+user_input = "Can I submit tomorrow?"
+print("BASELINE")
+run naive
+print("WITH GRAPH")
+run flow
+print("Retrieved context")
+
+
+Boom. Evaluation gold.
+
+✅ STEP 9 — Auto update graph after response (small)
+
+Example:
+
+store conversation
+update last intent
+
+Even tiny update = maturity.
+
+✅ STEP 10 — Diagrams
+
+Now you can draw because system exists.
+
+🧠 Order matters
+
+Do NOT start with LangGraph.
+
+First make:
+
+seed → queries → retrieval → works.
+
+Then orchestration.
