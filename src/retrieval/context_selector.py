@@ -3,6 +3,10 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from src.graph.queries import (
+    _get_all_student_decisions,
+    _get_student_courses,
+    _resolve_assignment,
+    get_assignment,
     get_student,
     get_current_screen,
     get_student_goals,
@@ -73,66 +77,93 @@ def compute_effective_deadline(
 
     return max(candidates)
 
-
 def select_context(
     student_id: str,
-    detected_intent: Optional[dict] = None
+    detected_intent: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
-    Returns:
+    Returns the minimal graph context needed for the detected intent.
+
+    detected_intent shape (from extractor):
     {
-      student,
-      assignment,
-      deadline,
-      decisions,
-      screen,
-      intent,
-      effective_deadline
+        "label": "deadline_help",
+        "confidence": 0.92,
+        "entities": {
+            "assignment_name": "...",
+            "assignment_id": "...",   # resolved by extractor if found
+            "goal_id": "...",
+            "date_reference_normalized": "...",
+        }
     }
     """
 
-    # 1. Basic facts
     student = get_student(student_id)
     screen = get_current_screen(student_id)
-    intent = detected_intent or get_last_intent(student_id)
+
+    intent = detected_intent or {}
+    label = intent.get("label", "general_question").lower()
+    entities = intent.get("entities") or {}
 
     assignment = None
-
-    def _assignment_from_goals(goals):
-        for g in goals:
-            goal_id = g.get("goal_id")
-            if goal_id:
-                a = get_assignment_for_goal(goal_id)
-                if a:
-                    return a
-        return None
-
-    # 2. Try screen context first
-    if screen and screen.get("name", "").lower().startswith("assignment"):
-        goals = get_student_goals(student_id)
-        assignment = _assignment_from_goals(goals)
-
-    # 3. Fallback: first goal
-    if assignment is None:
-        goals = get_student_goals(student_id)
-        assignment = _assignment_from_goals(goals)
-
-    # 4. Deadline
     deadline = None
-    if assignment:
-        deadline = get_deadline(assignment.get("assignment_id"))
-
-    # 5. Decisions
     decisions = []
-    if assignment:
-        raw = get_active_decisions(
-            student_id,
-            assignment.get("assignment_id")
-        )
-        decisions = _safe_filter_active_decisions(raw)
+    effective_deadline = None
+    goals = []
+    courses = []
 
-    # 6. Effective deadline
-    effective_deadline = compute_effective_deadline(deadline, decisions)
+    # ------------------------------------------------------------------
+    # deadline_help
+    # Student is asking when something is due or if they missed it.
+    # Need: assignment, its deadline, any active extensions.
+    # ------------------------------------------------------------------
+    if label == "deadline_help":
+        assignment = _resolve_assignment(student_id, entities, screen)
+        if assignment:
+            deadline = get_deadline(assignment["assignment_id"])
+            decisions = _safe_filter_active_decisions(
+                get_active_decisions(student_id, assignment["assignment_id"])
+            )
+            effective_deadline = compute_effective_deadline(deadline, decisions)
+
+    # ------------------------------------------------------------------
+    # extension_request
+    # Student wants more time. Need assignment + deadline to show current
+    # state, plus full decision history so AI/mentor can see prior grants.
+    # ------------------------------------------------------------------
+    elif label == "extension_request":
+        assignment = _resolve_assignment(student_id, entities, screen)
+        if assignment:
+            deadline = get_deadline(assignment["assignment_id"])
+        decisions = _get_all_student_decisions(student_id)   # all, not just active
+        effective_deadline = compute_effective_deadline(
+            deadline,
+            _safe_filter_active_decisions(decisions),
+        )
+
+    # ------------------------------------------------------------------
+    # assignment_help
+    # Student needs help with content/doing the assignment.
+    # Need: assignment details + deadline (so AI knows urgency).
+    # ------------------------------------------------------------------
+    elif label == "assignment_help":
+        assignment = _resolve_assignment(student_id, entities, screen)
+        if assignment:
+            deadline = get_deadline(assignment["assignment_id"])
+
+    # ------------------------------------------------------------------
+    # progress_query
+    # Student asking about overall progress. Goals + courses is enough.
+    # ------------------------------------------------------------------
+    elif label == "progress_query":
+        goals = get_student_goals(student_id)
+        courses = _get_student_courses(student_id)
+
+    # ------------------------------------------------------------------
+    # general_question (or unrecognised label)
+    # Attach goals so the AI has something to orient on.
+    # ------------------------------------------------------------------
+    else:
+        goals = get_student_goals(student_id)
 
     return {
         "student": student,
@@ -142,8 +173,9 @@ def select_context(
         "deadline": deadline,
         "decisions": decisions,
         "effective_deadline": effective_deadline,
+        "goals": goals,
+        "courses": courses,
     }
-
 
 # Quick test
 if __name__ == "__main__":

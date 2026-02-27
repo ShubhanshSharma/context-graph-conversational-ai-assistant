@@ -1,10 +1,12 @@
 # src/graph/queries.py
+from typing import Optional
+
 from neo4j import GraphDatabase
 import os
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "testpassword")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "test1234")
 
 _driver = None
 
@@ -35,6 +37,30 @@ def get_student(student_id):
         )
         rec = result.single()
         return _node_to_dict(rec["st"]) if rec else None
+
+def _get_student_courses(student_id: str) -> list:
+    with _get_driver().session() as s:
+        return [
+            _node_to_dict(r["cr"])
+            for r in s.run(
+                "MATCH (st:Student {student_id:$sid})-[:ENROLLED_IN]->(cr:Course) RETURN cr",
+                sid=student_id,
+            )
+        ]
+
+
+def _get_all_student_decisions(student_id: str) -> list:
+    with _get_driver().session() as s:
+        return [
+            _node_to_dict(r["d"])
+            for r in s.run(
+                """
+                MATCH (st:Student {student_id:$sid})-[:HAS_DECISION]->(d:Decision)
+                RETURN d ORDER BY d.valid_until DESC
+                """,
+                sid=student_id,
+            )
+        ]
 
 
 # -----------------------------
@@ -78,6 +104,46 @@ def get_assignment_for_goal(goal_id):
         rec = s.run(q, gid=goal_id).single()
         return _node_to_dict(rec["a"]) if rec else None
 
+def get_assignment(assignment_id):
+    drv = _get_driver()
+    with drv.session() as s:
+        result = s.run(
+            "MATCH (a:Assignment {assignment_id:$aid}) RETURN a",
+            aid=assignment_id
+        )
+        rec = result.single()
+        return _node_to_dict(rec["a"]) if rec else None
+
+def _resolve_assignment(student_id: str, entities: dict, screen: Optional[dict]) -> Optional[dict]:
+    """
+    Resolve a single assignment from:
+    1. Explicit assignment_id in entities (already resolved by extractor)
+    2. Explicit goal_id in entities
+    3. Screen is an assignment page -> first goal's assignment
+    4. Fallback: first assignment across all goals
+    """
+    if entities.get("assignment_id"):
+        return get_assignment(entities["assignment_id"])
+
+    if entities.get("goal_id"):
+        a = get_assignment_for_goal(entities["goal_id"])
+        if a:
+            return a
+
+    goals = get_student_goals(student_id)
+
+    if screen and screen.get("name", "").lower().startswith("assignment"):
+        for g in goals:
+            a = get_assignment_for_goal(g["goal_id"])
+            if a:
+                return a
+
+    for g in goals:
+        a = get_assignment_for_goal(g["goal_id"])
+        if a:
+            return a
+
+    return None
 
 # -----------------------------
 # Deadline
